@@ -1,0 +1,447 @@
+EDA Project
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(gridExtra)
+library(MASS)
+library(Hmisc)
+library(parameters)
+library(GGally)
+library(corrplot)
+library(car)
+library(brant)
+```
+
+
+```{r}
+raw <- read.csv("/Users/marcosmicheloni/Documents/Master/CS-6242/dva-project/top 100 billboard scrape code/Top 100 Songs.csv")
+head(raw)
+```
+
+```{r}
+# cleaning the dataframe
+clean <- raw %>%
+            dplyr::select(year, rank, name, artist, danceability,
+                   energy, key, loudness, speechiness, acousticness,
+                   instrumentalness, liveness, valence, tempo, duration) %>%
+            mutate(#year = as.factor(year),
+                   duration_seconds = duration / 1000) %>%
+            dplyr::select(-duration)
+head(clean)
+```
+
+*What do these variables mean?*
+- acousticness: a confidence measure from 0.0 to 1.0 of whether the track in acoustic (1.0 represents high confidence the track is acoustic)
+- danceability: describes how suitable a track is for dancing based on a combination of musical elements including tempo, rhythm stability, beat strength, and overall regularity (0.0 is least danceable and 1.0 in most danceable)
+- energy: represents a perceptual measure of intensity and activity
+  - energetic tracks feel fast, loud, and noisy (Death Metal has high energy while Back preludes score low)
+  - perceptual features contributing to this attribute include dynamic range, peceived loudness, timbre, onset rate, and general entroyp
+- instrumentalness: predicts whether a track contains no vocals (the closer to 1.0, the greater the likelihood the track contains no vocal content)
+  - values above 0.5 are intended to represent instrumental tracks
+- key: the key the track is in (integers map to pitches using standard Pitch Class Notation)
+- liveness: detects the presence of an audience in the recording (higher liveness values represent an increased P() that the track was performed live)
+  - a value above 0.8 provides strong likelihood that the track is live
+- loudness: the overall loudness of a track in decibels (dB)
+  - loudness values are averaged across the entire track
+  - values range from -60 and 0 db
+- speechiness: detects the presence of spoken words in a track
+  - the more exclusively speech-like the recording, the closer to 1.0
+  - values below 0.33 -> music / non-speech-like tracks
+  - values between 0.33 and 0.66 -> may contain both music and speech
+- tempo: the overal estimated tempo of a track in beats per minute
+- valence: a measure from 0.0 to 1.0 describing the musical positiveness conveyed by a track
+  - tracks with high valence sound more positive
+  - tracks with low valence sound more negative
+
+```{r}
+# out?
+which(clean[,"duration_seconds"]>600)
+```
+
+DURATION:
+
+```{r}
+ggplot(clean[-145,], aes(y=duration_seconds, x=as.factor(year))) +
+  geom_boxplot() +
+  ylab(("Duration (Seconds)")) +
+  ggtitle("Track Duration Distribution Evolution") +
+  theme(axis.title.x = element_blank())
+```
+
+When looking at the evolution of song duration we can identify two patterns:
+* As we expected, the median (center) of song duration distribution is becoming shorter
+* The distribution becomes less skewed to the right (i.e. "more normal") --> while in the beginning of the period we see heavier right tails, as of 2018 the distributions don't seem to have heavy tails
+
+```{r}
+chart_cols <- colnames(clean)[-c(1,2,3,4,7)]
+chart_list <- list()
+
+for(col in chart_cols){
+  g <- ggplot(clean, aes_string(y="rank", x=col, color="year")) +
+            geom_point(alpha=0.6) +
+            scale_color_gradient(low="#56B1F1", high="#132B43") +
+            ggtitle(col) +
+            theme(legend.title=element_blank()) +
+            scale_y_reverse() +
+            geom_smooth(se=FALSE)
+  chart_list[[col]] <- g
+}
+```
+
+
+```{r}
+chart_list[1]
+```
+
+
+```{r}
+chart_list2 <- list()
+for(col in chart_cols){
+  g <- ggplot(clean[-145,], aes_string(y=col, x="as.factor(year)")) +
+            geom_boxplot(alpha=0.6) +
+            ggtitle(col) +
+            theme(axis.title.x = element_blank())
+  chart_list2[[col]] <- g
+}
+```
+
+```{r}
+chart_list2[10]
+```
+
+Top 10 Yes / No:
+
+```{r}
+clean2 <- data.frame(clean)
+clean2$top_levels <- as.factor(ifelse(clean2$rank<=10, "Top 10", ifelse(clean2$rank>25, "Top 25-50","Top 11-25")))
+head(clean2)
+```
+
+```{r}
+chart_list3 <- list()
+for(col in chart_cols){
+  g <- ggplot(clean2[-145,], aes_string(y=col, x="as.factor(year)", fill="top_levels")) +
+            geom_boxplot(alpha=0.6) +
+            ggtitle(col) +
+            theme(axis.title.x = element_blank(),
+                  legend.position = "top",
+                  legend.title = element_blank())
+  chart_list3[[col]] <- g
+}
+```
+
+```{r}
+chart_list3[9]
+```
+
+INVESTIGATE VARIABLES AS INDICATOR FACTOR BASED ON THE THRESHOLDS SUGGESTED IN THE DOCUMENTATION.
+
+```{r}
+indic_df <- data.frame(clean2)
+indic_df <- indic_df %>%
+              mutate(instrumentalness = as.factor(ifelse(instrumentalness>=0.6, "Instrumental", "Not Instrumental")),
+                     liveness = as.factor(ifelse(liveness>=0.8, "Live", "Not Live")),
+                     speechiness = as.factor(ifelse(speechiness>0.66, "Spoken", ifelse(speechiness<0.33, "Music", "Mixed"))))
+indic_df
+```
+
+```{r}
+chart_list4 <- list()
+for(col in chart_cols){
+  g <- ggplot(indic_df[-145,], aes_string(y=col, x="as.factor(year)", fill="top_levels")) +
+            geom_boxplot(alpha=0.6) +
+            ggtitle(col) +
+            theme(axis.title.x = element_blank(),
+                  legend.position = "top",
+                  legend.title = element_blank())
+  chart_list4[[col]] <- g
+}
+```
+
+```{r}
+chart_list4[2]
+```
+
+Investigating patterns without looking at the time series:
+
+```{r}
+chart_cols_overall <- colnames(clean2)[-c(1,2,3,4)]
+chart_list5 <- list()
+for(col in chart_cols_overall){
+  g <- ggplot(clean2[-145,], aes_string(y=col, x="top_levels", fill="top_levels")) +
+            geom_boxplot(alpha=0.6) +
+            ggtitle(col) +
+            theme(axis.title.x = element_blank(),
+                  legend.position = "top",
+                  legend.title = element_blank())
+  chart_list5[[col]] <- g
+}
+```
+
+```{r}
+chart_list5[10]
+```
+
+
+ORDINAL LOGREG:
+* Let $Y$ be a an ordinal outcome with $J$ categories
+* $P(Y\leq j)$ is the cumulatice probability of $Y$ less than or equal to a specific category $j=1,\cdots,J-1$
+* The odds of being less than or equal to a particular category can be defined as $\frac{P(Y\leq j)}{P(Y>j)}$
+  for $j=1,\cdots,J-1$ since $P(X>J)=0$ and dividing by zero is undefined
+* Alternatively we can write $P(X>j)=1-P(Y\leq j)$
+* The log odds --> $log \frac{P(Y\leq j)}{P(Y>j)}=logit(P(Y\leq j))$
+
+* The ordinal logreg can be defined as --> $logit(P(Y \leq j))=\beta_{j0}+\beta_{j1}x_1+\cdots+\beta_{jp}x_p$
+  * Due to the parallel assumption, the intercepts are different for each category but the slopes are constant across categories, which simplifies the equation to: $logit(P(Y \leq j))=\beta_{0}+\beta_{1}x_1+\cdots+\beta_{p}x_p$
+    
+
+
+
+
+a) all vars + 3-class response
+
+* $H_0:$ there is no statistically significant factors between the variables that influence rank (or top levels)
+* $H_A:$ there is AT LEAST ONE statistically significant factor between the variables that influence rank
+
+```{r}
+logreg_df <- clean2 %>%
+                dplyr::select(-name, -artist, -rank, -year)
+head(logreg_df)
+```
+
+```{r}
+head(logreg_df,5)
+```
+
+For a first attempt let's break down the rank var down to 3 categories:
+
+
+```{r}
+ord_logreg <- polr(top_levels ~ ., data = logreg_df, Hess=TRUE)
+ord_logreg_sum <- summary(ord_logreg)
+ord_logreg_sum
+```
+
+
+```{r}
+(coef_table <- coef(ord_logreg_sum))
+```
+
+```{r}
+p_vals <- pnorm(abs(coef_table[,"t value"]), lower.tail=FALSE) * 2
+
+(coef_table <- cbind("logodds_ratio" = coef_table[,1],"odds_ratio" = exp(coef_table[,1]), "p-value" = p_vals))
+```
+
+
+
+It looks like most of our confidence intervals include 0. The only coefficient that would be significant at a 5% significance level is that of the `valence` variable,
+However, as per the ordinal logistic regression test definition, we can reject $H_0$ in favor of $H_A$
+
+Interpretation EX:
+* $e^{\beta_{danceability}}=0.47$ means that with a one-unit increase in danceability, the odds of jumping to the higher category are $53%$ lower
+
+
+
+b) What if we tried an ordinal logreg with all ranks: all vars with 50-class response
+
+```{r}
+clean2[,-c(1,3,4,16)] |>
+  transform(rank = as.ordered(rank)) |>
+  polr(rank ~ ., data = _) |>
+  parameters::dominance_analysis()
+```
+
+```{r}
+polr(as.ordered(rank) ~ ., clean2[,-c(1,3,4,16)], Hess=TRUE)
+```
+
+From the analysis above we take two learnings:
+- the ordinal logistic model including all variables doesn't explain a great deal of the variability in the response, as per its low pseudo R2, even if we use the 50 indicator variables
+- among the top 5 variables that rank the highest in terms of variable importance we find some of those suggested in the literature:
+  1) **valence**
+  2) speechiness
+  3) instrumentalness
+  4) acousticness
+  5) **danceability**
+  
+```{r}
+ord_logreg2 <- polr(as.ordered(rank) ~ ., data = clean2[,-c(1,3,4,16)], Hess=TRUE)
+ord_logreg2_sum <- summary(ord_logreg2)
+ord_logreg2_sum
+```
+
+```{r}
+(coef_table2 <- coef(ord_logreg2_sum))
+```
+
+```{r}
+p_vals2 <- pnorm(abs(coef_table2[,"t value"]), lower.tail=FALSE) * 2
+
+(coef_table2 <- cbind("logodds_ratio" = coef_table2[,1],"odds_ratio" = exp(coef_table2[,1]), "p-value" = p_vals2))
+```
+
+Valence once again seems to be statistically significant, hence we can reject $H_0$ in favor of $H_A$.
+
+**NO POINT IN ANALYZING RESULTS BECAUSE THE MODEL IS INVALID FOR THE DATA**
+
+c) Trying next approach --> subset of variables suggested in the first paper + 3-class response
+
+```{r}
+ord_logreg3 <- polr(top_levels ~ energy + valence + duration_seconds, data = logreg_df, Hess=TRUE)
+ord_logreg_sum3 <- summary(ord_logreg3)
+ord_logreg_sum3
+```
+
+```{r}
+(coef_table3 <- coef(ord_logreg_sum3))
+```
+
+```{r}
+p_vals3 <- pnorm(abs(coef_table3[,"t value"]), lower.tail=FALSE) * 2
+
+(coef_table3 <- cbind("logodds_ratio" = coef_table3[,1],"odds_ratio" = exp(coef_table3[,1]), "p-value" = p_vals3))
+```
+
+Once more, since valence is significant at the 5% level, we can reject $H_0$
+
+d) Trying next approach --> subset of variables suggested in the second paper and valence + 3-class response
+
+```{r}
+ord_logreg4 <- polr(top_levels ~ loudness + valence + danceability, data = logreg_df, Hess=TRUE)
+ord_logreg_sum4 <- summary(ord_logreg4)
+ord_logreg_sum4
+```
+
+```{r}
+(coef_table4 <- coef(ord_logreg_sum4))
+```
+
+```{r}
+p_vals4 <- pnorm(abs(coef_table4[,"t value"]), lower.tail=FALSE) * 2
+
+(coef_table4 <- cbind("logodds_ratio" = coef_table4[,1],"odds_ratio" = exp(coef_table4[,1]), "p-value" = p_vals4))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Let's test the assumptions:
+
+$ord\_logreg$ model
+
+1) MULTICOLLINEARITY
+
+```{r}
+# correlation plot
+cormat <- rcorr(as.matrix(logreg_df[,-12]))
+corrplot(as.matrix(cormat$r), type = "upper", order = "hclust", 
+         tl.col = "black", tl.srt = 45)
+```
+
+```{r}
+abs(cormat$r) >= 0.5
+```
+
+There doesn't seem to be a great deal of correlation. However, let's run a VIF analytics
+
+```{r}
+for_vif <- logreg_df %>%
+                dplyr::mutate(top_levels = as.numeric(top_levels))
+vif_fit <- lm(top_levels ~ ., data=for_vif)
+# rule of thumb
+vif(vif_fit) > 10
+```
+
+There seems to be no multicollinearity
+
+2) PROPORTIONAL ODDS:
+* we conduct Brant's Test to test the proportional odds assumption --> the relationship between each pair of outcome groups has to be the same
+  * if the relationship between all pairs of group is the same, then there's only ONE set of coefficients (i.e. ONE model)
+* if this assumptions is violated, then we'd need different models to describe the relationship between each pair of outcome groups
+
+```{r}
+brant(ord_logreg)
+```
+
+We can claim that the parallel assumption holds since all the probabilities (pvalues) values are greater or equal than the 0.05 significance threshold (CLOSE)
+
+$ord\_logreg2$ model
+
+1) MULTICOLLINEARITY
+
+We already know from the test above there is no multicollinearity.
+
+2) PROPORTIONAL ODDS:
+
+```{r}
+brant(ord_logreg2)
+```
+
+We can't claim that the parallel assumption holds since not all the probabilities (pvalues) values are greater or equal than the 0.05 significance threshold (CLOSE)
+
+$ord_logreg3$
+
+1) MULTICOLLINEARITY:
+
+```{r}
+for_vif3 <- logreg_df %>%
+                dplyr::select(top_levels, energy, valence, duration_seconds) %>%
+                mutate(top_levels = as.numeric(top_levels))
+vif_fit3 <- lm(top_levels ~ ., data=for_vif3)
+# rule of thumb
+vif(vif_fit3) > 10
+```
+
+No multicollinearity observed
+
+2) PROPORTIONAL ODDS:
+
+```{r}
+brant(ord_logreg3)
+```
+
+Parallel Assumption holds.
+
+$ord_logreg4$
+
+1) MULTICOLLINEARITY:
+
+```{r}
+for_vif4 <- logreg_df %>%
+                dplyr::select(top_levels, loudness, valence, danceability) %>%
+                mutate(top_levels = as.numeric(top_levels))
+vif_fit4 <- lm(top_levels ~ ., data=for_vif4)
+# rule of thumb
+vif(vif_fit4) > 10
+```
+
+No multicollinearity observed
+
+2) PROPORTIONAL ODDS:
+
+```{r}
+brant(ord_logreg4)
+```
+
+Parallel Assumption holds.
+
+
+```{r}
+clean2[clean2$year==2013,]
+```
+

@@ -1,0 +1,671 @@
+This file contains the code for the data consolidation & preparation (namely joining popular and unpopular datasets) along with the models we built for analyzing music.
+
+```{r}
+library(ggplot2)
+library(glmnet)
+library(dplyr)
+library(gridExtra)
+library(MASS)
+library(Hmisc)
+library(parameters)
+library(GGally)
+library(corrplot)
+library(car)
+library(insight)
+library(brant)
+library(caret)
+library(e1071)
+library(pROC)
+```
+
+```{r}
+raw <- read.csv("/Users/marcosmicheloni/Documents/GitHub/dva-project/top 100 billboard scrape code/Top 50 Songs.csv")
+head(raw)
+```
+
+```{r}
+# cleaning the dataframe
+clean <- raw %>%
+            rename(playlist_url = playlist) %>%
+            dplyr::select(year, rank, name, artist, danceability,
+                   energy, key, loudness, speechiness, acousticness,
+                   instrumentalness, liveness, valence, tempo, duration,
+                   artist_popularity, artist_followers, playlist_url) %>%
+            mutate(year = as.character(year),
+                   duration_seconds = duration / 1000) %>%
+            dplyr::select(-duration)
+head(clean)
+```
+
+Analyzing time series:
+
+```{r}
+g_dance <- ggplot(clean, aes(as.factor(year), danceability)) +
+                geom_boxplot() +
+                ggtitle("Popular Song Danceability Evolution") +
+                theme(axis.title.x = element_blank(),
+                      axis.text.x = element_text(angle=45, vjust=0.8),
+                      title = element_text(size=9))
+
+g_energy <- ggplot(clean, aes(as.factor(year), energy)) +
+                geom_boxplot() +
+                ggtitle("Popular Song Energy Evolution") +
+                theme(axis.title.x = element_blank(),
+                      axis.text.x = element_text(angle=45, vjust=0.8),
+                      title = element_text(size=9))
+
+g_valence <- ggplot(clean, aes(as.factor(year), valence)) +
+                geom_boxplot() +
+                ggtitle("Popular Song Valence Evolution") +
+                theme(axis.title.x = element_blank(),
+                      axis.text.x = element_text(angle=45, vjust=0.8),
+                      title = element_text(size=9))
+
+g_tempo <- ggplot(clean, aes(as.factor(year), tempo)) +
+                geom_boxplot() +
+                ggtitle("Popular Song Tempo Evolution") +
+                theme(axis.title.x = element_blank(),
+                      axis.text.x = element_text(angle=45, vjust=0.8),
+                      title = element_text(size=9))
+
+g_loudness <- ggplot(clean, aes(as.factor(year), energy)) +
+                geom_boxplot() +
+                ggtitle("Popular Song Loudness Evolution") +
+                theme(axis.title.x = element_blank(),
+                      axis.text.x = element_text(angle=45, vjust=0.8),
+                      title = element_text(size=9))
+
+g_speechiness <- ggplot(clean, aes(as.factor(year), speechiness)) +
+                  geom_boxplot() +
+                  ggtitle("Popular Song Speechiness Evolution") +
+                theme(axis.title.x = element_blank(),
+                      axis.text.x = element_text(angle=45, vjust=0.8),
+                      title = element_text(size=9))
+
+g_acousticness <- ggplot(clean, aes(as.factor(year), acousticness)) +
+                  geom_boxplot() +
+                  ggtitle("Popular Song Acousticness Evolution") +
+                  theme(axis.title.x = element_blank(),
+                        axis.text.x = element_text(angle=45, vjust=0.8),
+                        title = element_text(size=9))
+
+g_instrumentalness <- ggplot(clean, aes(as.factor(year), instrumentalness)) +
+                        geom_boxplot() +
+                        theme(axis.title.x = element_blank(),
+                              axis.text.x = element_text(angle=45, vjust=0.8),
+                              title = element_text(size=9))
+
+g_liveness <- ggplot(clean, aes(as.factor(year), liveness)) +
+                        geom_boxplot() +
+                        ggtitle("Popular Song Liveness Evolution") +
+                        theme(axis.title.x = element_blank(),
+                              axis.text.x = element_text(angle=45, vjust=0.8),
+                              title = element_text(size=9))
+
+g_dur <- ggplot(clean[-145,], aes(as.factor(year), duration_seconds)) +
+                        geom_boxplot() +
+                        ggtitle("Popular Song Duration Evolution") +
+                        theme(axis.title.x = element_blank(),
+                              axis.text.x = element_text(angle=45, vjust=0.8),
+                              title = element_text(size=9))
+
+g_followers <- ggplot(clean[-145,], aes(as.factor(year), artist_followers)) +
+                        geom_boxplot() +
+                        ggtitle("Popular Song Artist Follower Evolution") +
+                        theme(axis.title.x = element_blank(),
+                              axis.text.x = element_text(angle=45, vjust=0.8),
+                              title = element_text(size=9))
+
+g_pop <- ggplot(clean[-145,], aes(as.factor(year), artist_popularity)) +
+                        geom_boxplot() +
+                        ggtitle("Popular Song Artist Popularity Evolution") +
+                        theme(axis.title.x = element_blank(),
+                              axis.text.x = element_text(angle=45, vjust=0.8),
+                              title = element_text(size=9))
+```
+
+
+```{r}
+grid.arrange(g_loudness, g_speechiness, g_dur, g_energy, ncol=2)
+```
+
+
+```{r}
+grid.arrange(g_dance, g_valence, g_tempo, ncol=2)
+```
+
+When looking at the time series we notice that popular songs have behaviour across some metrics (Danceability,  Valence, Tempo) --> we can say that the overwhelming majority of the songs in the time series are "danceable.
+We can also identify a few clear patterns:
+* Popular songs are becoming shorter
+* Popular songs are becoming less energetic
+* Popular songs are becoming less loud
+
+All in all we can claim we have some degree of consistency within our popular songs.
+
+```{r}
+count_pop = sum(grepl("pop", raw$artist_genres))
+count_pop / dim(raw)[1]
+```
+
+Additionally, 80% of the songs in the dataset belong to artists whose genre is "pop", which gives us more evidence in our claim.
+
+---
+
+Next we merge the datasets:
+
+```{r}
+popular_songs <- clean %>% dplyr::select(-rank) %>% mutate(playlist = as.factor("popular"))
+head(popular_songs,2)
+```
+
+```{r}
+control_raw <- read.csv("/Users/marcosmicheloni/Documents/GitHub/dva-project/top 100 billboard scrape code/Control Data.csv")
+head(control_raw)
+```
+
+```{r}
+unpopular_songs <- control_raw %>%
+                        mutate(year = "na",
+                               playlist = as.factor(playlist),
+                               duration_seconds = duration / 1000) %>%
+                        dplyr::select(-uri, -artist_genres, -mode, -duration, playlist)
+head(unpopular_songs)
+```
+
+```{r}
+all_songs <- rbind(popular_songs, unpopular_songs)
+all_songs$group <- as.factor(ifelse(all_songs$playlist == "popular", "popular", "unpopular"))
+```
+
+```{r}
+ca <- write.csv(all_songs, "all_songs.csv", row.names = FALSE)
+```
+
+
+```{r}
+col_charts <- c("danceability", "energy", "key", "loudness", "speechiness", "acousticness", "instrumentalness",
+                "liveness", "valence", "tempo", "artist_popularity", "artist_followers", "duration_seconds")
+
+chart_list <- list()
+
+for (col in col_charts){
+  g <- ggplot(all_songs, aes_string("playlist", col, fill="playlist")) +
+          geom_boxplot() +
+          ggtitle(col) +
+          theme(legend.position="none",
+                axis.title.x = element_blank(),
+                axis.text.x = element_text(angle=15, vjust=0.8))
+  chart_list[[col]] <- g
+}
+```
+
+
+```{r}
+chart_list2 <- list()
+
+for (col in col_charts){
+  g <- ggplot(all_songs, aes_string("group", col, fill="group")) +
+          geom_boxplot() +
+          ggtitle(col) +
+          theme(legend.position="none",
+                axis.title.x = element_blank())
+  chart_list2[[col]] <- g
+}
+```
+
+```{r}
+grid.arrange(chart_list2[[1]], chart_list2[[9]], ncol=2)
+```
+
+Danceability seems to explain the variance of the response.
+
+```{r}
+grid.arrange(chart_list2[[2]], chart_list[[2]], ncol=2)
+```
+
+Energy might not be the best predictor for popularity.
+
+```{r}
+grid.arrange(chart_list2[[4]], chart_list[[4]], ncol=2)
+```
+
+Loudness too might be a confounding variable. Note how the metal essentials playlist clearly is skewing the data.
+
+```{r}
+grid.arrange(chart_list2[[5]], chart_list[[5]], ncol=2)
+```
+
+Speechiness seems to have a long tailed distribution, so in order to use it maybe a transformation is in order.
+
+```{r}
+grid.arrange(ggplot(all_songs, aes(x=group, y=log(speechiness), fill=group)) +
+  geom_boxplot() +
+  ggtitle("Log of the Speechiness") +
+    theme(legend.position="none"),
+ggplot(all_songs, aes(x=playlist, y=log(speechiness), fill=playlist)) +
+  geom_boxplot() +
+  ggtitle("Log of the Speechiness") +
+    theme(legend.position="none",
+          axis.text.x = element_text(angle=15, vjust=0.8)), ncol=2)
+```
+
+That might be a bit better.
+
+```{r}
+grid.arrange(chart_list2[[6]], chart_list[[6]], ncol=2)
+```
+
+Once more, the metal essentials playlist seems to be skewing the data group label monumentally.
+
+```{r}
+grid.arrange(chart_list2[[7]], chart_list[[7]], ncol=2)
+```
+
+```{r}
+grid.arrange(ggplot(all_songs, aes(x=group, y=log(instrumentalness), fill=group)) +
+  geom_boxplot() +
+  ggtitle("Log of the Instrumentalness") +
+    theme(legend.position="none"),
+ggplot(all_songs, aes(x=playlist, y=log(instrumentalness), fill=playlist)) +
+  geom_boxplot() +
+  ggtitle("Log of the Instrumentalness") +
+    theme(legend.position="none",
+          axis.text.x = element_text(angle=15, vjust=0.8)), ncol=2)
+```
+
+```{r}
+grid.arrange(chart_list2[[8]], chart_list[[8]], ncol=2)
+```
+
+```{r}
+grid.arrange(ggplot(all_songs, aes(x=group, y=log(liveness), fill=group)) +
+  geom_boxplot() +
+  ggtitle("Log of the Liveness") +
+    theme(legend.position="none"),
+ggplot(all_songs, aes(x=playlist, y=log(liveness), fill=playlist)) +
+  geom_boxplot() +
+  ggtitle("Log of the Liveness") +
+    theme(legend.position="none",
+          axis.text.x = element_text(angle=15, vjust=0.8)), ncol=2)
+```
+
+Maybe liveness is a predictor we can live without.
+
+```{r}
+grid.arrange(chart_list2[[9]], chart_list[[9]], ncol=2)
+```
+
+```{r}
+grid.arrange(chart_list2[[10]], chart_list[[10]], ncol=2)
+```
+
+Tempo, surprisingly, might not be a great predictor either.
+
+```{r}
+grid.arrange(chart_list2[[11]], chart_list[[11]], ncol=2)
+```
+
+```{r}
+grid.arrange(chart_list2[[12]], chart_list[[12]], ncol=2)
+```
+
+Artist followers seems like a good indicator.
+
+```{r}
+grid.arrange(chart_list2[[13]], chart_list[[13]], ncol=2)
+```
+
+What have we learned?
+* Popular songs are shorter
+* Metal songs might be skewing our "unpopular" class since its behaviour oscilates between being similar to popular songs and classic music/opera, depending on the variable
+* we might have some correlation between artist followership and popularity --> so when fitting the models we might need to pick one --> popularity
+
+---
+
+MODELING:
+
+```{r}
+all_songs_clean <- all_songs %>% dplyr::select(-year, -name, -artist, -playlist, -artist_followers, -playlist_url)
+library(caTools)
+set.seed(123)
+split <- sample.split(all_songs_clean$group, SplitRatio = 0.7)
+train <- all_songs_clean[split,]
+test <- all_songs_clean[!split,]
+```
+
+Approach:
+1) All variables
+2) Variables suggested in first paper: loudness + valence + danceability, which happen to be among the best predictors
+3) Tree models --> to understand variable importance
+
+1)
+a) Logreg
+
+```{r}
+for_logreg <- train %>% mutate(group = ifelse(group == "popular", 1, 0))
+
+logreg1 <- glm(group~., data=for_logreg, family = binomial())
+logreg1_sum <- summary(logreg1)
+logreg1_sum
+```
+
+```{r}
+c(deviance(logreg1), 1-pchisq(deviance(logreg1),555))
+```
+
+* pvalue = 1 --> we can't reject H0 --> indicates a good fit
+
+```{r}
+logreg_preds <- predict.glm(logreg1, test, type="response")
+
+# Create a sequence of thresholds to sweep through (e.g., from 0.1 to 0.9 in 0.05 increments)
+thresholds <- seq(0.1, 0.9, by = 0.05)
+
+# Initialize vectors to store accuracy values for each threshold
+accuracy_values <- numeric(length(thresholds))
+
+# Loop through each threshold and calculate accuracy
+for (i in 1:length(thresholds)) {
+  logistic_predictions <- factor(ifelse(logreg_preds > thresholds[i], "popular", "unpopular"), levels = c("popular", "unpopular"))
+  test$group <- factor(test$group, levels = c("popular", "unpopular"))
+  
+  # Now calculate the confusion matrix
+  confusion <- confusionMatrix(logistic_predictions, test$group)
+  
+  # Store the accuracy value in the vector
+  accuracy_values[i] <- confusion$overall["Accuracy"]
+}
+
+# Plot accuracy vs. threshold
+plot(thresholds, accuracy_values, type = "l", xlab = "Threshold", ylab = "Accuracy", main = "Accuracy vs. Threshold")
+```
+
+```{r}
+logistic_predictions <- factor(ifelse(logreg_preds > 0.5, "popular", "unpopular"), levels = c("popular", "unpopular"))
+test$group <- factor(test$group, levels = c("popular", "unpopular"))
+mean(logistic_predictions == test$group)
+```
+
+
+Our model is good, no doubt.
+
+b) SVM:
+
+```{r}
+svm_tune <- tune.svm(group ~ ., data = train, kernel = "radial", cost = seq(0.1,100,0.1))
+best_svm <- svm_tune$best.model
+best_svm
+```
+```{r}
+svm1_preds <- predict(best_svm, test)
+svm1_accuracy <- mean(svm1_preds == test$group)
+svm1_accuracy
+```
+
+```{r}
+# Confusion matrix
+confusion_matrix <- confusionMatrix(svm1_preds, test$group)
+
+# Accuracy
+accuracy <- confusion_matrix$overall["Accuracy"]
+
+# Other metrics (precision, recall, F1-score)
+precision <- confusion_matrix$byClass["Precision"]
+recall <- confusion_matrix$byClass["Recall"]
+f1_score <- confusion_matrix$byClass["F1"]
+
+# ROC curve
+roc_curve <- roc(predictor = as.numeric(svm1_preds), response = as.numeric(test$group))
+plot(roc_curve)
+```
+
+This model has nearly perfect classification.
+
+No assumptions to check since this is a non-parametric model.
+
+c) KNN
+
+```{r}
+library(class)
+library(caret)
+
+# Define a range of k values
+k_values <- seq(1,21,2)
+
+# Initialize a vector to store performance metrics
+metrics <- vector("list", length(k_values))
+
+# Perform k-fold cross-validation for each k
+for (i in 1:length(k_values)) {
+  k <- k_values[i]
+  
+  # Initialize a vector to store cross-validated metrics
+  cv_metrics <- vector("numeric", length(train))
+  
+  # Perform k-fold cross-validation
+  for (j in 1:length(train)) {
+    # Split data into train and validation subsets
+    train_subset <- train[-j, ]
+    validation_subset <- train[j, ]
+    
+    # Train the KNN model
+    knn_model <- knn(train = train_subset[, -13], 
+                     test = validation_subset[, -13], 
+                     cl = train_subset$group, 
+                     k = k)
+    
+    # Calculate the accuracy (you can choose other metrics)
+    accuracy <- sum(knn_model == validation_subset$group) / length(validation_subset$group)
+    
+    # Store the accuracy
+    cv_metrics[j] <- accuracy
+  }
+  
+  # Calculate the average accuracy for this k
+  avg_accuracy <- mean(cv_metrics)
+  
+  # Store the average accuracy in the metrics vector
+  metrics[[i]] <- avg_accuracy
+}
+
+# Find the k with the highest average accuracy
+best_k <- k_values[which.max(metrics)]
+
+cat("Optimal k:", best_k)
+
+
+```
+
+```{r}
+knn_optimal <- knn(train[,-13], test[,-13], cl = train$group, k=3)
+knn_test_acc <- mean(knn_optimal==test$group)
+knn_test_acc
+```
+
+2) a) Logreg:
+
+```{r}
+logreg2 <- glm(group~loudness+valence+danceability, data=for_logreg, family = binomial())
+logreg2_sum <- summary(logreg2)
+logreg2_sum
+```
+
+```{r}
+c(deviance(logreg2), 1-pchisq(deviance(logreg2),564))
+```
+
+* pvalue = 1 --> we can't reject H0 --> indicates a good fit
+
+```{r}
+logreg_preds2 <- predict.glm(logreg2, test, type="response")
+# Initialize vectors to store accuracy values for each threshold
+accuracy_values2 <- numeric(length(thresholds))
+
+# Loop through each threshold and calculate accuracy
+for (i in 1:length(thresholds)) {
+  logistic_predictions <- factor(ifelse(logreg_preds2 > thresholds[i], "popular", "unpopular"), levels = c("popular", "unpopular"))
+  test$group <- factor(test$group, levels = c("popular", "unpopular"))
+  
+  # Now calculate the confusion matrix
+  confusion <- confusionMatrix(logistic_predictions, test$group)
+  
+  # Store the accuracy value in the vector
+  accuracy_values2[i] <- confusion$overall["Accuracy"]
+}
+
+# Plot accuracy vs. threshold
+plot(thresholds, accuracy_values2, type = "l", xlab = "Threshold", ylab = "Accuracy", main = "Accuracy vs. Threshold")
+```
+
+```{r}
+logistic_predictions2 <- factor(ifelse(logreg_preds > 0.5, "popular", "unpopular"), levels = c("popular", "unpopular"))
+test$group <- factor(test$group, levels = c("popular", "unpopular"))
+mean(logistic_predictions2 == test$group)
+```
+
+2b) SVM main vars
+
+```{r}
+svm_tune2 <- tune.svm(group ~ loudness + valence + danceability, data = train, kernel = "radial", cost = seq(0.1,100,0.1))
+best_svm2 <- svm_tune2$best.model
+best_svm2
+```
+
+```{r}
+svm2_preds <- predict(best_svm2, test)
+svm2_accuracy <- mean(svm2_preds == test$group)
+svm2_accuracy
+```
+
+```{r}
+# Confusion matrix
+confusion_matrix2 <- confusionMatrix(svm2_preds, test$group)
+
+# Accuracy
+accuracy2 <- confusion_matrix2$overall["Accuracy"]
+
+# Other metrics (precision, recall, F1-score)
+precision2 <- confusion_matrix2$byClass["Precision"]
+recall2 <- confusion_matrix2$byClass["Recall"]
+f1_score2 <- confusion_matrix2$byClass["F1"]
+
+# ROC curve
+roc_curve2 <- roc(predictor = as.numeric(svm2_preds), response = as.numeric(test$group))
+plot(roc_curve2)
+```
+
+2c) KNN - main vars:
+
+```{r}
+# Initialize a vector to store performance metrics
+metrics2 <- vector("list", length(k_values))
+
+# Perform k-fold cross-validation for each k
+for (i in 1:length(k_values)) {
+  k <- k_values[i]
+  
+  # Initialize a vector to store cross-validated metrics
+  cv_metrics <- vector("numeric", length(train))
+  
+  # Perform k-fold cross-validation
+  for (j in 1:length(train)) {
+    # Split data into train and validation subsets
+    train_subset <- train[-j, ]
+    validation_subset <- train[j, ]
+    
+    # Train the KNN model
+    knn_model <- knn(train = train_subset[,c("danceability","loudness","valence")], 
+                     test = validation_subset[,c("danceability","loudness","valence")], 
+                     cl = train_subset$group, 
+                     k = k)
+    
+    # Calculate the accuracy (you can choose other metrics)
+    accuracy <- sum(knn_model == validation_subset$group) / length(validation_subset$group)
+    
+    # Store the accuracy
+    cv_metrics[j] <- accuracy
+  }
+  
+  # Calculate the average accuracy for this k
+  avg_accuracy <- mean(cv_metrics)
+  
+  # Store the average accuracy in the metrics vector
+  metrics2[[i]] <- avg_accuracy
+}
+
+# Find the k with the highest average accuracy
+best_k2 <- k_values[which.max(metrics2)]
+
+cat("Optimal k:", best_k2)
+```
+
+```{r}
+knn_optimal2 <- knn(train[,c("danceability","loudness","valence")], test[,c("danceability","loudness","valence")], cl = train$group, k=3)
+knn_test_acc2 <- mean(knn_optimal2==test$group)
+knn_test_acc2
+```
+
+```{r}
+colnames(train)
+```
+
+3) Tree-based models:
+
+Decision Tree:
+
+```{r}
+library(rpart)
+library(rpart.plot)
+library(caret)
+
+# creating model with k-fold CV
+tree_model_cv <- train(group~.,
+                       train[,],
+                       method="rpart",
+                       trControl = trainControl(method="cv", number = 10))
+rpart.plot(tree_model_cv$finalModel)
+```
+
+```{r}
+# creating model with k-fold CV
+tree_model_cv2 <- train(group~.,
+                       train[,-11],
+                       method="rpart",
+                       trControl = trainControl(method="cv", number = 10))
+rpart.plot(tree_model_cv2$finalModel)
+```
+
+
+```{r}
+# Make predictions on the test set
+tree_preds <- predict(tree_model_cv, newdata = test)
+
+# Calculate classification accuracy
+tree_accuracy <- mean(tree_preds == test$group)
+print(paste("Decision Tree Test Set Mean Classification Accuracy:", tree_accuracy))
+```
+
+3b) Random Forest:
+
+```{r}
+library(randomForest)
+rf_model_cv <- train(group~.,
+                     data=train,
+                     method="rf",
+                     trControl=trainControl(method="cv", number=10))
+print(rf_model_cv)
+```
+
+```{r}
+varImpPlot(rf_model_cv$finalModel)
+```
+
+```{r}
+# predictions on the test set
+rf_preds <- predict(rf_model_cv, newdata = test)
+
+rf_accuracy <- mean(rf_preds == test$group)
+print(paste("Random Forest Test Set Mean Classification Accuracy:", rf_accuracy))
+```
+
+
